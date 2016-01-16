@@ -76,16 +76,16 @@ submit_file=condor_qc_$timestamp
 #submit_file=condor_qc 
 
 printf "
-executable				=/mnt/lustre1/CompBio/bin/fastqc
-output						=$output_directory/logs/\$(Cluster).\$(Process).out
-error							=$output_directory/logs/\$(Cluster).\$(Process).err
-log							=$output_directory/logs/\$(Cluster).\$(Process).log
-request_cpus				=$request_cpus
-request_memory		=$request_memory
-notify_user				=$email
-notification				=$notification
-getenv						=$getenv
-+MaxExecutionTime	=$max_execution_time
+executable              =/mnt/lustre1/CompBio/bin/fastqc
+output          	=$output_directory/logs/\$(Cluster).\$(Process).out
+error                   =$output_directory/logs/\$(Cluster).\$(Process).err
+log                     =$output_directory/logs/\$(Cluster).\$(Process).log
+request_cpus            =$request_cpus
+request_memory          =$request_memory
+notify_user             =$email
+notification            =$notification
+getenv                  =$getenv
++MaxExecutionTime       =$max_execution_time
 
 " \
 > ${submit_file}
