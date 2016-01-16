@@ -83,25 +83,25 @@ fi
 if [ ! -e $PROJ/markdups/$SAMPLE\_markdups.bam.md5 ]; then
     java -jar -Xms36g -Xmx54g $PICARD/MarkDuplicates.jar 
         MAX_FILE_HANDLES=200 
-	    MAX_RECORDS_IN_RAM=$MAX_READS 
-	    I=$PROJ/sortsam/$SAMPLE\_sortsam.bam 
-	    O=$PROJ/markdups/$SAMPLE\_markdups.bam 
-	    M=$PROJ/markdups/$SAMPLE.metrics 
-	    CREATE_INDEX=true 
-	    CREATE_MD5_FILE=true
+        MAX_RECORDS_IN_RAM=$MAX_READS 
+        I=$PROJ/sortsam/$SAMPLE\_sortsam.bam
+        O=$PROJ/markdups/$SAMPLE\_markdups.bam
+        M=$PROJ/markdups/$SAMPLE.metrics
+        CREATE_INDEX=true
+        CREATE_MD5_FILE=true
 fi
 
 if [ ! -e $PROJ/ir/$SAMPLE\_ir.bam.md5 ]; then
 
 ### Realign Target Creator
     java -jar $GATK
-    	-R $HG
-    	-T RealignerTargetCreator
-    	-I $PROJ/markdups/$SAMPLE\_markdups.bam 
-    	-nt $DTHREADS
-    	-o $PROJ/rtc/$SAMPLE.interval_list 
-    	-known:indels,vcf $PROJ/temp/$SAMPLE/mills.vcf 
-    	--disable_auto_index_creation_and_locking_when_reading_rods
+        -R $HG
+        -T RealignerTargetCreator
+        -I $PROJ/markdups/$SAMPLE\_markdups.bam 
+        -nt $DTHREADS
+        -o $PROJ/rtc/$SAMPLE.interval_list 
+        -known:indels,vcf $PROJ/temp/$SAMPLE/mills.vcf 
+        --disable_auto_index_creation_and_locking_when_reading_rods
 
 ### Indel Realigner
     java -jar $GATK
