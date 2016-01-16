@@ -52,7 +52,23 @@ cp $TG.idx $PROJ/temp/$SAMPLE
 
 ### Align with BWA
 if [ ! -e $PROJ/sortsam/$SAMPLE\_sortsam.bam.md5 ]; then
-    bwa mem -t $DTHREADS -k 19 -w 100 -d 100 -r 1.5 -c 10000 -A 1 -B 4 -O 6 -E 1 -L 5 -U 17 -T 30 -M -R $READGROUPS $HG $RAW/$SAMPLE\_R1.fastq $RAW/$SAMPLE\_R2.fastq > $PROJ/bwa/$SAMPLE.bam
+    bwa mem 
+        -t $DTHREADS 
+        -k 19 
+        -w 100 
+        -d 100 
+        -r 1.5
+        -c 10000 
+        -A 1 
+        -B 4 
+        -O 6 
+        -E 1 
+        -L 5 
+        -U 17 
+        -T 30 
+        -M 
+        -R $READGROUPS 
+            $HG $RAW/$SAMPLE\_R1.fastq $RAW/$SAMPLE\_R2.fastq > $PROJ/bwa/$SAMPLE.bam
 
 ### Sort alignments
     java -jar -Xms36g -Xmx54g $PICARD/SortSam.jar
@@ -67,19 +83,35 @@ fi
 if [ ! -e $PROJ/markdups/$SAMPLE\_markdups.bam.md5 ]; then
     java -jar -Xms36g -Xmx54g $PICARD/MarkDuplicates.jar 
         MAX_FILE_HANDLES=200 
-	MAX_RECORDS_IN_RAM=$MAX_READS 
-	I=$PROJ/sortsam/$SAMPLE\_sortsam.bam 
-	O=$PROJ/markdups/$SAMPLE\_markdups.bam 
-	M=$PROJ/markdups/$SAMPLE.metrics 
-	CREATE_INDEX=true 
-	CREATE_MD5_FILE=true
+	    MAX_RECORDS_IN_RAM=$MAX_READS 
+	    I=$PROJ/sortsam/$SAMPLE\_sortsam.bam 
+	    O=$PROJ/markdups/$SAMPLE\_markdups.bam 
+	    M=$PROJ/markdups/$SAMPLE.metrics 
+	    CREATE_INDEX=true 
+	    CREATE_MD5_FILE=true
 fi
 
 if [ ! -e $PROJ/ir/$SAMPLE\_ir.bam.md5 ]; then
 
 ### Realign Target Creator
-    java -jar $GATK -R $HG -T RealignerTargetCreator -I $PROJ/markdups/$SAMPLE\_markdups.bam -nt $DTHREADS -o $PROJ/rtc/$SAMPLE.interval_list -known:indels,vcf $PROJ/temp/$SAMPLE/mills.vcf --disable_auto_index_creation_and_locking_when_reading_rods
+    java -jar $GATK
+    	-R $HG
+    	-T RealignerTargetCreator
+    	-I $PROJ/markdups/$SAMPLE\_markdups.bam 
+    	-nt $DTHREADS
+    	-o $PROJ/rtc/$SAMPLE.interval_list 
+    	-known:indels,vcf $PROJ/temp/$SAMPLE/mills.vcf 
+    	--disable_auto_index_creation_and_locking_when_reading_rods
 
 ### Indel Realigner
-    java -jar $GATK -R $HG -T IndelRealigner -I $PROJ/markdups/$SAMPLE\_markdups.bam -targetIntervals $PROJ/rtc/$SAMPLE.interval_list -maxInMemory $MAX_READS -known:indels,vcf $PROJ/temp/$SAMPLE/mills.vcf -o $PROJ/ir/$SAMPLE\_ir.bam --generate_md5 --disable_auto_index_creation_and_locking_when_reading_rods
+    java -jar $GATK
+        -R $HG 
+        -T IndelRealigner 
+        -I $PROJ/markdups/$SAMPLE\_markdups.bam 
+        -targetIntervals $PROJ/rtc/$SAMPLE.interval_list 
+        -maxInMemory $MAX_READS 
+        -known:indels,vcf $PROJ/temp/$SAMPLE/mills.vcf 
+        -o $PROJ/ir/$SAMPLE\_ir.bam 
+        --generate_md5 
+        --disable_auto_index_creation_and_locking_when_reading_rods
 fi
