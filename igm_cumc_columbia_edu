@@ -1,0 +1,226 @@
+http://redmine.igm.cumc.columbia.edu/projects/biopipeline/wiki/GATK
+
+# Pipelines from igm.cumc.columbia.edu
+
+# GATK Module[¶](#GATK-Module)
+
+<a name="Brief-description"></a>
+
+## Brief description[¶](#Brief-description)
+
+Within this module Broad's GATK is used to produce an analysis-ready BAM file, first by applying **Indel Re-alignment**, then **Base Quality Score Recalibration (BQSR)**. Genotyping is performed on this BAM file using **Unified Genotyper**, and the observed variant calls are given quality annotations using either hard quality thresholds or GATK **Variant Quality Score Recalibration**. SNV's and Indel's are analyzed separately through this process. Called indels are also matched with the current library of Indels within the CHGV AnnoDB and redundant indels are removed using the **CHGV_Variant_Matcher** perl script. Finally the quality-annotated SNV and Indel vcf files are merged together to create a single analysis-ready VCF file.
+
+<a name="Previous-module"></a>
+
+## Previous module[¶](#Previous-module)
+
+BAM Merge Module
+
+<a name="Following-modules"></a>
+
+## Following modules[¶](#Following-modules)
+
+Coverage Module  
+MPileup Module  
+QC Module
+
+<a name="Input-files"></a>
+
+## Input files[¶](#Input-files)
+
+combined_rmdup.bam  
+combined_rmdup.bai
+
+<a name="Key-Output-files"></a>
+
+## Key Output files[¶](#Key-Output-files)
+
+In order:  
+combined_rmdup_realn.bam  
+combined_rmdup_realn_recal.bam  
+combined_rmdup_realn_recal.bai  
+recalSNPs.vcf (or filteredSNPs.vcf )  
+recalIndels.vcf (or filteredIndels.vcf )  
+recalIndels_matched_annodb_matched.vcf ( or filteredIndels_matched ... )  
+analysisReady.vcf
+
+<a name="Detailed-Description"></a>
+
+## Detailed Description[¶](#Detailed-Description)
+
+The GATK Module can be broken up into two distinct parts: * Generating analysis-ready reads by processing the BAM file through Indel Realignment and Base Quality Score Recalibration * Using the analysis-ready BAM file to genotype the sample, annotate the genotype calls with quality data (through Filtration or VQSR), and build the analysis-ready VCF.
+
+The GATK version used for all of these steps is currently **GATK v1.6-11-g3b2fab9**.
+
+These two phases are discussed in detail below.
+
+<a name="Generating-Analysis-Ready-Reads"></a>
+
+## <ins>Generating Analysis-Ready Reads</ins>[¶](#Generating-Analysis-Ready-Reads)
+
+<a name="1-Indel-Realignment"></a>
+
+### 1\. Indel Realignment[¶](#1-Indel-Realignment)
+
+Aligned reads surrounding loci specified by the --known parameters are re-aligned to the region, applying the Smith-Waterman algorithm, reducing the likelihood of false-positive variant calls due to alignment artifacts that can often accompany indels. The two sources of targets for realignment within this pipeline are: **Mills_and_1000G_gold_standard.indels.b37.sites.vcf** and **dbsnp_135.b37.vcf** .
+
+This step is applied uniformly to all sample types. The output of realignment is named combined_rmdup_realn.bam . The generalized commands are given below.
+
+Realignment Target Creation:  
+`java -Xmx20g -jar GenomeAnalysisTK-1.6-11-g3b2fab9/GenomeAnalysisTK.jar -R $reference_fasta -T RealignerTargetCreator -I $combined_rmdup_bam -o $interval_list -nt $thread_num --known $mills --known $dbsnp`
+
+Perform Realignment:  
+`java -Xmx20g -jar GenomeAnalysisTK-1.6-11-g3b2fab9/GenomeAnalysisTK.jar -R $reference_fasta -T IndelRealigner -I $combined_rmdup_bam -targetIntervals $interval_list -maxReads 10000000 -maxInMemory 1000000 -o $combined_rmdup_realn_bam -known $mills -known $dbsnp`
+
+<a name="2-Base-Quality-Score-Recalibration-BQSR"></a>
+
+### 2\. Base Quality Score Recalibration (BQSR)[¶](#2-Base-Quality-Score-Recalibration-BQSR)
+
+It has been well established that base call quality scores in reads often non-randomly co-varies with other attributes than actual confidence in the base call, such as with the position along the read (machine cycle) and with particular di-nucleotides. The affect of these additional co-variates is removed by applying the GATK Base Quality Score Recalibration method to the realigned BAM file. The method requires a list of known single-base variation; this pipeline uses **dbSNP 135**.
+
+This step is applied uniformly to all sample types. The output of realignment is named combined_rmdup_realn_recal.bam . The generalized commands are given below.
+
+Quality Co-variate analysis:  
+`java -Xmx20g -jar GenomeAnalysisTK-1.6-11-g3b2fab9r/GenomeAnalysisTK.jar -R $reference_fasta -T CountCovariates -I $combined_rmdup_realn_bam -nt $thread_num -knownSites $dbsnp -cov ReadGroupCovariate -cov QualityScoreCovariate -cov CycleCovariate -cov DinucCovariate -recalFile $base_recal_data`
+
+Application of Quality Score Recalibration:  
+`java -Xmx20g -jar GenomeAnalysisTK-1.6-11-g3b2fab9/GenomeAnalysisTK.jar -R $reference_fasta -T TableRecalibration -I $combined_rmdup_realn_bam -o $combined_rmdup_realn_recal_bam -recalFile $base_recal_data -noOQs`
+
+<a name="Mid-GATK-QC-check-Temporary-File-Deletion-and-Module-Submission"></a>
+
+## <ins>Mid-GATK QC check, Temporary File Deletion, and Module Submission</ins>[¶](#Mid-GATK-QC-check-Temporary-File-Deletion-and-Module-Submission)
+
+After the first phase of the GATK module, a technical error check is performed, looking for key words across the error logs produced which would indicate a failure has occurred. If any such failure is detected, then the SeqDB and SequenceDB databases are updated accordingly for this sample, and the module will immediately exit. If no error is detected, then a call is made to CHGV script **automated_temp_delete_test.pl** to delete any temporary precursor BAM files to the final, anlaysis-ready BAM file.
+
+After the temporary files are deleted, three pipeline modules are submitted to the queue: Coverage, mPileup, and Copy. Coverage and mPileup can begin work immediately since they rely only on the combined_rmdup_realn_recal BAM file produced by BQSR. The Copy module will hold until all other pipeline modules have ended.
+
+<a name="Genotyping-38-construction-of-analysis-ready-VCF"></a>
+
+## <ins>Genotyping & construction of analysis-ready VCF</ins>[¶](#Genotyping-38-construction-of-analysis-ready-VCF)
+
+<a name="1-Sample-Genotyping"></a>
+
+### 1\. Sample Genotyping[¶](#1-Sample-Genotyping)
+
+Samples are genotyped by processing the combined_rmdup_realn_recal BAM file with the **GATK UnifiedGenotyper**. This step is applied uniformly to all sample types. The command is given below, as well as a note about each of the command-line options used.
+
+`java -Xmx20g -jar $gatk_dir/GenomeAnalysisTK.jar -l INFO -R hs37d5.fa -T UnifiedGenotyper -I $combined_rmdup_realn_recal_bam -glm BOTH -o $raw_vcf -nt 5 -stand_call_conf 20 -stand_emit_conf 20 -minIndelCnt 3 -deletions 2 -D dbsnp_135.b37.vcf`
+
+*   -glm BOTH Genotype likelihoods calculation model to employ; SNP is the default option, while INDEL is also available for calling indels and BOTH is available for calling both together
+*   -nt 5 How many data threads should be allocated to running this analysis; default = 1.
+*   -stand_call_conf 20 The minimum phred-scaled confidence threshold at which variants should be called; default = 30\. Reduced to increase sensitivity for calling raw variants.
+*   -stand_emit_conf 20 The minimum phred-scaled confidence threshold at which variants should be emitted (and filtered with LowQual if less than the calling threshold); default = 30.
+*   -minIndelCnt 3 Minimum number of consensus indels required to trigger genotyping run; default = 5\. Decreased to increase sensitivity.
+*   -deletions 2 Maximum fraction of reads with deletions spanning this locus for it to be callable; default = 0.5 . This feature is disabled by setting it to 2.
+
+<a name="2-Genotype-quality-annotation"></a>
+
+### 2\. Genotype quality annotation[¶](#2-Genotype-quality-annotation)
+
+There are two methods by which the genotype (variant) calls can be filtered based on quality data emitted by the genotype procedure: 1) using GATK Variant Filtration to apply threshold values to quality metrics or 2) using the GATK Variant Quality Score Relaibration (VQSR) method to assign a probability to each genotype call by differentially modeling the behavior of the quality metrics for novel and previously-observed variants. These methods can be applied to SNV calls and Indel calls independently. The VQSR method is generally preferred, but may not be possible when there are insufficient variants to precisely build the required models. For example, when considering indels within the context of exome sequencing. The usage of these methods is described for each sample type specifically below:
+
+<ins>Genome</ins>  
+VQSR is used for both SNVs and Indels for genome samples. First Variant Recalibrator is called to build the model, then it is called again to apply the model to the VCF.
+
+SNV model creation:  
+`java -Xmx20g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T VariantRecalibrator -input $raw_vcf -nt 5 -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $hapmap -resource:omni,known=false,training=true,truth=false,prior=12.0 $omni -resource:dbsnp,known=true,training=false,truth=false,prior=6.0 $dbsnp -an QD -an HaplotypeScore -an MQRankSum -an ReadPosRankSum -an FS -an MQ -an DP --mode SNP -recalFile $snp_recal_file -tranchesFile $snp_tranches_file -rscriptFile $snp_rscript_file`
+
+SNV model application:  
+`java -Xmx20g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T ApplyRecalibration -input $raw_vcf --mode SNP --ts_filter_level 99.9 -tranchesFile $snp_tranches_file -recalFile $snp_recal_file -o $recalSNPs_rawIndels_vcf`
+
+Indel model creation:  
+`java -Xmx20g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T VariantRecalibrator -input $raw_vcf -nt $thread_num -resource:mills,VCF,known=true,training=true,  
+truth=true,prior=12.0 $mills -an QD -an FS -an HaplotypeScore -an ReadPosRankSum --mode INDEL -recalFile $indel_recal_file -tranchesFile $indel_tranches_file -rscriptFile $indel_rscript_file -tranche 100.0 -tranche 99.9 -tranche 99.00 -tranche 95.0`
+
+Indel model application:  
+`java -Xmx20g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T ApplyRecalibration -input $recalSNPs_rawIndels_vcf --mode INDEL --ts_filter_level 95.0 -tranchesFile $indel_tranches_file -recalFile $indel_recal_file -o $analysisReady_vcf`
+
+<ins>Exome</ins>
+
+VQSR is only used for SNVs in exome samples since there are not typically sufficient numbers of called indels within Exome regions to build the adaptive error model. Therefore, hard-thresholds are applied which correspond to the GATK best-practices.
+
+SNV model creation:  
+`java -Xmx15g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T VariantRecalibrator -input $snp_raw_vcf -nt $thread_num -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $hapmap -resource:omni,known=false,training=true,truth=false,prior=12.0 $omni -resource:dbsnp,known=true,training=false,truth=false,prior=6.0 $dbsnp -an QD -an HaplotypeScore -an MQRankSum -an ReadPosRankSum -an FS -an MQ -mode SNP -recalFile $snp_recal_file -tranchesFile $snp_tranches_file -rscriptFile $snp_rscript_file --maxGaussians 4 -percentBad 0.05`
+
+SNV model application:  
+`java -Xmx15g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T ApplyRecalibration -input $snp_raw_vcf -ts_filter_level 99.0 -tranchesFile $snp_tranches_file -recalFile $snp_recal_file -o $recalSNPs_vcf`
+
+Indel QC filter application:  
+`java -Xmx15g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T VariantFiltration --variant $indel_raw_vcf -o $filteredIndels_vcf --filterExpression "QD < 2.0" --filterName QDFilter --filterExpression "FS > 200.0" --filterName FSFilter --filterExpression "ReadPosRankSum < -20.0" --filterName ReadPosFilte`
+
+<ins>Custom Capture</ins>
+
+Thresholds are used for both SNVs and Indels in custom capture samples, since as is the case with indels in Exomes, there may not be sufficient numbers of variants within captured regions to do the adaptive error modeling.
+
+SNV QC filter application:  
+`java -Xmx12g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T VariantFiltration --variant $snp_raw_vcf -o $filteredSNPs_vcf --filterExpression "QD < 2.0" --filterName QDFilter --filterExpression "MQ < 35.0" --filterName MQfilter --filterExpression "FS > 60.0" --filterName FSFilter --filterExpression "HaplotypeScore > 1000.0" --filterName HaplotypeScoreFilter --filterExpression "MQRankSum < -12.5" --filterName MQRankSumFilter --filterExpression "ReadPosRankSum < -8.0" --filterName ReadPosFilter`
+
+Indel QC filter application:  
+`java -Xmx12g -jar $gatk_dir/GenomeAnalysisTK.jar -R $reference_fasta -T VariantFiltration --variant $indel_raw_vcf -o $filteredIndels_vcf --filterExpression "QD < 2.0" --filterName QDFilter --filterExpression "FS > 200.0" --filterName FSFilter --filterExpression "ReadPosRankSum < -20.0" --filterName ReadPosFilter`
+
+<a name="3-AnnoDB-Indel-Matching"></a>
+
+### 3\. AnnoDB Indel Matching[¶](#3-AnnoDB-Indel-Matching)
+
+GATK can be inconsistent in how indels are called. Versions that produce identical haplotypes can be named with differing genome coordinates, reference allele, and alternate alleles. For example, given a reference sequence of `ATATC` , a deletion of `AT` at position 1 will result in the same sequence as a deletion of `AT` at position 3.
+
+In order to prevent redundant indels from being added to the genotype database, AnnoDB, a script is run which compares the 2kb sequence surrounding each called indel, replacing the reference allele with the alternate allele, with the 2kb sequence for every known indel housed in AnnoDB. When a match is found, the indel is labeled with the corresponding unique identifier of the matched allele in AnnoDB by adding a field to the INFO column of the indel-only VCF. The actual indel called within the VCF remains unchanged, rather the down-stream pipeline will recognize and use this label when loading the sample to AnnoDB.
+
+The script used to do this matching was originally developed by Yujun Han, a Duke CHGV post-doc. It can be found at `/nfs/goldstein/goldsteinlab/Bioinformatics/scripts/CHGV_variant_matcher1.7.pl` .
+
+Below is an example usage for how this script is called within the pipeline:  
+`perl CHGV_variant_matcher1.7.pl -v [indel-only input VCF] -b annodb -t Indel -r [reference fasta] -T [output prefix]`
+
+More information about AnnoDB Indel Matching is available on the AnnoDB wiki here: [http://redmine2.chgv.lsrc.duke.edu/projects/annodb/wiki/AnnoDB_Indel_Matching](http://redmine2.chgv.lsrc.duke.edu/projects/annodb/wiki/AnnoDB_Indel_Matching)
+
+<a name="4-Analysis-Ready-VCF-construction"></a>
+
+### 4\. Analysis-Ready VCF construction[¶](#4-Analysis-Ready-VCF-construction)
+
+Because the SNVs and Indels have gone through distinct processes in their own VCF files, they need to be merged together and re-sorted by genomic coordinate. This is managed by a series awk & unix commands. The general algorithm is pasted below:
+
+<ins>split snp VCF into header & body parts</ins>  
+`awk -v var1=$tmp_vcf_head -v var2=$tmp_snp_body '/^#/ {print $0 > var1; next;} {print $0 > var2;}' $filteredSNPs_vcf`
+
+<ins>split indel VCF into header & body parts</ins>  
+`awk -v var1=$tmp_indel_body '/^[^#]/ {print $0 > var1;}' $filteredIndels_matched_vcf`
+
+<ins>concatenate snp body & indel body, split into autosome & sex-chr parts</ins>  
+`cat $tmp_snp_body $tmp_indel_body | awk -v var1=$tmp_autosome -v var2=$tmp_X -v var3=$tmp_Y -v var4=$tmp_MT -v var5=$tmp_contigs '/^[0-9]/ {print $0 > var1; next;} /^X/ {print $0 > var2; next;} /^Y/ {print $0 > var3; next;} /^M/ {print $0 > var4; next;} {print $0 > var5;}'`
+
+<ins>sort autosome & sex-chr parts (if they exist)</ins>  
+`sort -k1,1n -k2,2n $tmp_autosome > $tmp_sorted_autosome  
+touch $tmp_sorted_X  
+if [ -a $tmp_X ] ; then  
+sort -k2,2n $tmp_X > $tmp_sorted_X  
+fi  
+touch $tmp_sorted_Y  
+if [ -a $tmp_Y ] ; then  
+sort -k2,2n $tmp_Y > $tmp_sorted_Y  
+fi  
+touch $tmp_sorted_MT  
+if [ -a $tmp_MT ] ; then  
+sort -k2,2n $tmp_MT > $tmp_sorted_MT  
+fi  
+if [ -a $tmp_contigs ] ; then  
+sort -k1,1r -k2,2n $tmp_contigs > $tmp_sorted_contigs  
+fi`
+
+<ins>concatenate VCF header with sorted autosome and sex-chr parts to build final analysisReady VCF</ins>  
+`cat $tmp_vcf_head $tmp_sorted_autosome $tmp_sorted_X $tmp_sorted_Y $tmp_sorted_MT $tmp_sorted_contigs > $analysisReady_vcf`
+
+<a name="4-Analysis-Ready-VCF-construction-2"></a>
+
+### 4\. Analysis-Ready VCF construction[¶](#4-Analysis-Ready-VCF-construction-2)
+
+Finally, for <ins>Exome</ins> and <ins>Custom Capture</ins> samples, an additional SNV-only VCF and a full analysisReady VCF is printed that is restricted only to the captured region for both VCF, as defined by the Capture Kit used in sample prep ( _ExomeSamPrepKit_ in the SequenceDB.seqdbClone table ).
+
+`/nfs/goldstein/goldsteinlab/software/pipeline_misc_perl/chgv_restrict_vcf_by_capture_regions.pl -vcf $filteredSNPs_vcf -cap $captured_region -out $filteredSNPs_restricted_vcf`
+
+`/nfs/goldstein/goldsteinlab/software/pipeline_misc_perl/chgv_restrict_vcf_by_capture_regions.pl -vcf $analysisReady_vcf -cap $captured_region -out $analysisReady_restricted_vcf`
+
+<a name="Automated-QC"></a>
+
+## <ins>Automated QC</ins>[¶](#Automated-QC)
+
+Finally, as with all other modules, the Automaed QC check is run to verify that no errors were printed to the logs for the above processes.
